@@ -97,6 +97,13 @@ kubectl apply -n argocd \
 
 kubectl apply --server-side -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 
+# Expose argocd server
+kubectl patch svc argocd-server -n argocd -p '{"spec": {"type": "NodePort"}}'
+kubectl get svc -n argocd argocd-server -ojson | jq -r '.spec.ports[] | select(.name=="https") | .nodePort'
+
+# get argocd password
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d # use admin:$NODE_PORT to access argocd
+
 log "Waiting for ArgoCD server to be ready (up to 3 min)..."
 kubectl rollout status deployment/argocd-server -n argocd --timeout=180s
 
@@ -107,7 +114,9 @@ kubectl apply -f "$REPO_DIR/manifests/clusterdos/install.yaml"
 
 # ── 9. Deploy hello-aranya ────────────────────────────────────────────────────
 log "Deploying hello-aranya..."
-kubectl apply -f "$REPO_DIR/manifests/nginx/hello-aranya.yaml"
+k apply -f deploy/namespace.yaml
+kubectl apply -f "deploy/hello-aranya.yaml"
+kubectl get svc -n ayobami-app hello-aranya-np -ojson | jq -r '.spec.ports[] | select(.name=="http") | .nodePort'
 
 # ── 10. Print summary ─────────────────────────────────────────────────────────
 ARGOCD_PASS=$(kubectl -n argocd get secret argocd-initial-admin-secret \
