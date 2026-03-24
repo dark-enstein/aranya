@@ -1,0 +1,78 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: clusterdos-vllm
+  labels:
+    app: vllm
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+    spec:
+      priorityClassName: clusterdos-vllm
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:latest
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: MODEL_NAME
+              value: {{ .Values.model }}
+            - name: TENSOR_PARALLEL_SIZE
+              value: "1"
+            - name: GPU_MEMORY_UTILIZATION
+              value: "0.9"
+
+            {{- with (.Values.secret) }}
+            - name: HUGGING_FACE_HUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: token
+            # Also set HF_TOKEN (some models use this variable)
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: token
+            {{- end}}
+
+          command:
+            - python3
+            - -m
+            - vllm.entrypoints.openai.api_server
+            - --model
+            - $(MODEL_NAME)
+            - --host
+            - "0.0.0.0"
+            - --port
+            - "8000"
+            - --tensor-parallel-size
+            - $(TENSOR_PARALLEL_SIZE)
+            - --gpu-memory-utilization
+            - $(GPU_MEMORY_UTILIZATION)
+
+          resources:
+            {{- .Values.resources | toYaml | nindent 12 }}
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            timeoutSeconds: 5

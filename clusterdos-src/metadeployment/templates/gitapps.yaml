@@ -1,0 +1,176 @@
+{{- $outerValues := .Values }}
+{{- range $name, $params := .Values.gitapps }}
+{{- if $params.enabled }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+
+metadata:
+  name: clusterdos-{{ $name }}
+  namespace: argocd
+  annotations:
+    {{- with $params.syncWave }}
+    argocd.argoproj.io/sync-wave: "{{ $params.syncWave }}"
+    {{- end }}
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  project: default
+  destination:
+    # https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
+    name: {{ default "in-cluster" $params.destination }}
+    namespace: {{ $params.namespace }}
+  syncPolicy:
+    {{- if $params.automated }}
+    automated:
+      prune: true
+      allowEmpty: true
+      selfHeal: true
+    {{- end }}
+    syncOptions:
+    - RespectIgnoreDifferences=true
+    - CreateNamespace=true
+    - PruneLast=true
+    - ApplyOutOfSyncOnly=true
+      # server-side apply by default
+    - ServerSideApply={{ ne $params.serverSideApply false }}
+
+  {{- with $params.ignoreDifferences }}
+  ignoreDifferences:
+    {{- $params.ignoreDifferences | toYaml | nindent 4 }}
+  {{- end }}
+
+  source:
+    {{- if $params.internal }}
+    repoURL: {{ $outerValues.clusterdos.repoURL }}
+    targetRevision: {{ $outerValues.clusterdos.ref }}
+    {{- else}}
+    repoURL: {{ $params.repoURL }}
+    targetRevision: {{ $params.targetRevision }}
+    {{- end}}
+
+    {{- if $params.chart}}
+    chart: {{ $params.chart }}
+    {{- end}}
+    {{- if $params.path }}
+    path: {{ $params.path }}
+    {{- end}}
+
+
+    # ============================================================================
+    # VALUES OBJECT
+    # ============================================================================
+    # Injects cluster-specific values for certain apps. Each app has its own
+    # injection logic below - only runs if the app name matches.
+    #
+    # For all other apps, values are passed through unchanged.
+    # NOTE: in the future this could be replaced by a clusterdos operator
+    # rather than contorting helm into shape, but it works OK for now.
+    # ============================================================================
+    {{- with $params.values }}
+    helm:
+      valuesObject:
+
+        # ------------------------------------------------------------------------
+        # TAILSCALE INJECTION
+        # ------------------------------------------------------------------------
+        # Injects clusterdos.clustername into:
+        #   - operatorConfig.hostname
+        #   - operatorConfig.defaultTags
+        #   - proxyConfig.defaultTags
+        # Only sets values if not already explicitly provided by user.
+        # ------------------------------------------------------------------------
+        {{- if eq $name "tailscale" }}
+        {{- $tailscaleValues := deepCopy $params.values }}
+        {{- $operatorConfig := $tailscaleValues.operatorConfig | default dict }}
+
+        # Set hostname from clusterdos.clustername (if not user-provided)
+        {{- if not $operatorConfig.hostname }}
+        {{- $_ := set $operatorConfig "hostname" $outerValues.clusterdos.clustername }}
+        {{- end }}
+
+        # Set operator defaultTags (if not user-provided)
+        {{- if not $operatorConfig.defaultTags }}
+        {{- $_ := set $operatorConfig "defaultTags" (list (printf "tag:%s-operator" $outerValues.clusterdos.clustername)) }}
+        {{- end }}
+
+        {{- $_ := set $tailscaleValues "operatorConfig" $operatorConfig }}
+
+        # Set proxy defaultTags (if not user-provided)
+        {{- $proxyConfig := $tailscaleValues.proxyConfig | default dict }}
+        {{- if not $proxyConfig.defaultTags }}
+        {{- $_ := set $proxyConfig "defaultTags" (printf "tag:%s-subtag" $outerValues.clusterdos.clustername) }}
+        {{- $_ := set $tailscaleValues "proxyConfig" $proxyConfig }}
+        {{- end }}
+
+        {{- $tailscaleValues | toYaml | nindent 8 }}
+
+        # ------------------------------------------------------------------------
+        # CONFIG INJECTION
+        # ------------------------------------------------------------------------
+        # Injects clusterdos.clustername into:
+        #   - clustername (top-level value)
+        # Only sets value if not already explicitly provided by user.
+        # ------------------------------------------------------------------------
+        {{- else if eq $name "config" }}
+        {{- $configValues := deepCopy $params.values }}
+
+        # Set clustername from clusterdos.clustername (if not user-provided)
+        {{- if not $configValues.clustername }}
+        {{- $_ := set $configValues "clustername" $outerValues.clusterdos.clustername }}
+        {{- end }}
+
+        {{- $configValues | toYaml | nindent 8 }}
+
+        # ------------------------------------------------------------------------
+        # LGTM INJECTION
+        # ------------------------------------------------------------------------
+        # Injects clusterdos.clustername into:
+        #   - cluster.name
+        #   - CLUSTER_NAME env var in alloy-metrics.alloy.extraEnv
+        # Only sets values if not already explicitly provided by user.
+        # ------------------------------------------------------------------------
+        {{- else if eq $name "lgtm" }}
+        {{- $lgtmValues := deepCopy $params.values }}
+
+        # Set cluster.name from clusterdos.clustername (if not user-provided)
+        {{- $clusterSection := $lgtmValues.cluster | default dict }}
+        {{- if not $clusterSection.name }}
+        {{- $_ := set $clusterSection "name" $outerValues.clusterdos.clustername }}
+        {{- end }}
+        {{- $_ := set $lgtmValues "cluster" $clusterSection }}
+
+        # Set CLUSTER_NAME env var in alloy-metrics (if not user-provided)
+        {{- $alloyMetrics := index $lgtmValues "alloy-metrics" | default dict }}
+        {{- $alloySection := $alloyMetrics.alloy | default dict }}
+        {{- $extraEnv := $alloySection.extraEnv | default list }}
+
+        # Remove any existing CLUSTER_NAME to avoid duplicates
+        {{- $filteredEnv := list }}
+        {{- range $extraEnv }}
+        {{- if ne .name "CLUSTER_NAME" }}
+        {{- $filteredEnv = append $filteredEnv . }}
+        {{- end }}
+        {{- end }}
+
+        # Add CLUSTER_NAME with clusterdos.clustername value
+        {{- $clusterNameEnv := dict "name" "CLUSTER_NAME" "value" $outerValues.clusterdos.clustername }}
+        {{- $extraEnv = append $filteredEnv $clusterNameEnv }}
+
+        {{- $_ := set $alloySection "extraEnv" $extraEnv }}
+        {{- $_ := set $alloyMetrics "alloy" $alloySection }}
+        {{- $_ := set $lgtmValues "alloy-metrics" $alloyMetrics }}
+
+        {{- $lgtmValues | toYaml | nindent 8 }}
+
+        # ------------------------------------------------------------------------
+        # DEFAULT: PASS THROUGH VALUES UNCHANGED
+        # ------------------------------------------------------------------------
+        {{- else }}
+        {{- $params.values | toYaml | nindent 8 }}
+        {{- end }}
+    {{- end }}
+
+  {{- end }}
+{{- end }}

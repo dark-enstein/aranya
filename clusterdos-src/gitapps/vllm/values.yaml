@@ -1,0 +1,14 @@
+---
+# defaults
+service:
+  type: ClusterIP
+  port: 8000
+resources:
+  requests:
+    nvidia.com/gpu: 1
+    memory: "16Gi"
+    cpu: "4"
+  limits:
+    nvidia.com/gpu: 1
+    memory: "32Gi"
+    cpu: "8"

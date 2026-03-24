@@ -1,0 +1,35 @@
+#+title: Architecture Decision: Template-Level Value Injection
+
+* The Problem
+
+Helm performs a "shallow merge" of values. When a user overrides any key under =gitapps.<name>.values=, the entire =values= map is replaced — not deep-merged.
+
+This means default values set via YAML anchors (like =*clustername=) get silently dropped when users provide their own overrides.
+
+* The Solution
+
+The template in [[file:../../metadeployment/templates/gitapps.yaml][metadeployment/templates/gitapps.yaml]] explicitly injects values derived from =clusterdos.clustername= at render time. This bypasses the shallow merge issue entirely.
+
+If a user explicitly provides their own value for an injected field, their value is preserved.
+
+* Injected Values
+
+| Gitapp    | Field                       | Default Value                              |
+|-----------|-----------------------------|--------------------------------------------|
+| config    | =clustername=               | =clusterdos.clustername=                   |
+| tailscale | =operatorConfig.hostname=   | =clusterdos.clustername=                   |
+| tailscale | =operatorConfig.defaultTags=| =["tag:<clustername>-operator"]=           |
+| tailscale | =proxyConfig.defaultTags=   | ="tag:<clustername>-subtag"=               |
+| lgtm      | =cluster.name=              | =clusterdos.clustername=                   |
+| lgtm      | =CLUSTER_NAME= env var      | =clusterdos.clustername=                   |
+
+* Adding New Injections
+
+To add injection for a new gitapp, follow the existing pattern in [[file:../../metadeployment/templates/gitapps.yaml][gitapps.yaml]]:
+
+1. Locate the gitapp's entry in the =gitapps= range loop
+2. Add a conditional block that sets the derived value using =clusterdos.clustername=
+3. Use Helm's =merge= or =dict= functions to inject the value into the appropriate path
+4. Preserve user-provided values by checking if the field already exists
+
+See existing examples in the template for the exact syntax.

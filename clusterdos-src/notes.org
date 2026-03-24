@@ -1,0 +1,22 @@
+#+title: Notes
+
+* ArgoCD
+** remote helm values file references
+- coming soon, as soon as microk8s upgrades argocd to 2.6
+- https://argo-cd.readthedocs.io/en/stable/user-guide/helm/#values-files
+- https://argo-cd.readthedocs.io/en/stable/user-guide/multiple_sources/#helm-value-files-from-external-git-repository
+* Helm
+** tests
+- https://helm.sh/docs/topics/chart_tests/
+
+
+* Where did the name come from?
+- name comes from pirates of silicon valley story (link youtube video)
+  - https://www.youtube.com/watch?v=9nfgRf2A0Tc
+  - now what Microsoft left out in this glorified windows ad of a movie, is that the OS they went and bought for ~$50k before subsequently building a multi-billion dollar operating system on was called QDOS. Steve Ballmer references it as 'disk operating system' - 'DOS'. This is what microsoft claims DOS stands for. But in fact, QDOS stands for 'quick-and-dirty operating system.'
+    Tim Patterson
+    https://en.wikipedia.org/wiki/86-DOS
+    https://en.wikipedia.org/wiki/Tim_Paterson (who shares an Alma Mater with our CTO and co-founder Yuchen, at least for his AI PhD)
+    https://www.thocp.callapple.org/biographies/paterson_tim.htm
+    fun fact - Tim Patterson was also a pioneer of 'BattleBots' and also raced rally cars, and engineered one of the first motorsports computer systems and rigged it into his ~1980 porche 911
+    https://www.historyofinformation.com/detail.php?id=99

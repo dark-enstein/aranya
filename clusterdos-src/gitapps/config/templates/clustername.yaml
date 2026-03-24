@@ -1,0 +1,10 @@
+---
+# This ConfigMap stores the cluster name for reference by other components in the cluster.
+# It can be used by observability tools, logging agents, or other services that need
+# to identify which cluster they are running on.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clustername
+data:
+  clustername: {{ required "clustername is required - set it in metadeployment values under gitapps.config.values.clustername" .Values.clustername | quote }}

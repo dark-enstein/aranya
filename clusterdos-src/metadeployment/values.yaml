@@ -1,0 +1,769 @@
+---
+
+clusterdos:
+  # REQUIRED: this will error if unset
+  ref: null
+
+  # we suggest using https://github.com/dustinkirkland/golang-petname
+  # &clustername is an anchor for use in other charts 
+  # REQUIRED: this will error if unset
+  clustername: &clustername null
+
+  # this is used by gitapps marked 'internal'
+  repoURL: 'https://gitlab.com/aranya-tech/public/clusterdOS.git'
+
+gitapps:
+  config:
+    enabled: true
+    namespace: clusterdos
+    internal: true
+    path: gitapps/config
+    automated: true
+    syncWave: 1
+    values:
+      # intentionally errors if this is unset - must be configured per-cluster
+      # we suggest using https://github.com/dustinkirkland/golang-petname
+      # &clustername is an anchor for use in other charts 
+      clustername: *clustername
+    # argocd:
+    # NOTE: requires a pvc by default
+    # it would be better to replace the bitnami chart with
+    # kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+    # enabled: false
+    # namespace: argocd
+    # # destination cluster name
+    # # https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters
+    # destination: <PROBABLY_NOT_MAIN_CLUSTER>
+    # repoURL: 'https://charts.bitnami.com/bitnami'
+    # chart: argo-cd
+    # targetRevision: '11.0.0'
+    # automated: true
+    # syncWave: 1
+    # values: {}
+    # helm repo add bitnami https://charts.bitnami.com/bitnami
+    # helm search repo bitnami/argo
+    # helm show values bitnami/argo-cd
+
+  certmanager:
+    enabled: false
+    namespace: cert-manager
+    repoURL: 'https://charts.jetstack.io'
+    chart: cert-manager
+    targetRevision: 'v1.19.1'
+    automated: true
+    syncWave: 1
+    values:
+      crds:
+        enabled: true
+      replicaCount: 2
+      podDisruptionBudget:
+        enabled: true
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+      prometheus:
+        enabled: false
+        servicemonitor:
+          enabled: false
+      # webhook:
+      #   replicaCount: 2
+      #   podDisruptionBudget:
+      #     enabled: true
+      #global:
+      #  loglevel: 2
+
+  crossplane:
+    enabled: false
+    namespace: crossplane-system
+    repoURL: 'https://charts.crossplane.io/stable'
+    chart: crossplane
+    targetRevision: '2.0.2'
+    automated: true
+    syncWave: 1
+    values:
+      # helm repo add crossplane-stable https://charts.crossplane.io/stable
+      # helm search repo crossplane-stable --versions
+      # helm show values crossplane-stable/crossplane
+      metrics:
+        enabled: false
+
+  ksm:
+    enabled: false
+    namespace: clusterdos-ksm
+    repoURL: 'https://prometheus-community.github.io/helm-charts'
+    chart: kube-state-metrics
+    targetRevision: '7.0.1'
+    automated: true
+    syncWave: 1
+    values:
+      # helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+      # helm search repo prometheus-community --versions
+      # helm show values prometheus-community/kube-state-metrics
+      autosharding:
+        enabled: false
+      replicas: 1
+      metricAllowlist: []
+      service:
+        annotations:
+          k8s.grafana.com/scrape: "true"
+
+      # prunes down collections to the essentials
+      collectors:
+      - cronjobs
+      - daemonsets
+      - deployments
+      - horizontalpodautoscalers
+      - jobs
+      - nodes
+      - pods
+      - replicasets
+      - services
+      # all namespaces by default
+      # namespaces:
+      #   -
+      verticalPodAutoscaler:
+        enabled: false
+
+  lgtm:
+    enabled: false
+    # note that if you change this you must also change the namespace of the secret ref below
+    namespace: clusterdos-observability
+    repoURL: 'https://grafana.github.io/helm-charts'
+    chart: k8s-monitoring
+    targetRevision: '3.6.2'
+    automated: true
+    syncwave: 1
+    values:
+      # for configuring remote destinations, navigate to the following url:
+      # https://your-instance.grafana.net/a/grafana-collector-app/alloy?tab=installation
+      #
+      # helm repo add grafana https://grafana.github.io/helm-charts
+      # helm search repo grafana/k8s-monitoring
+      # helm show values grafana/k8s-monitoring
+      cluster:
+        # synced with clusterdos.clustername via YAML anchor
+        name: *clustername
+
+      prometheusOperatorObjects:
+        # https://github.com/grafana/k8s-monitoring-helm/tree/main/charts/k8s-monitoring/charts/feature-prometheus-operator-objects
+        # follow servicemonitors by default
+        enabled: true
+
+      # configure destination with secret ref
+      # https://github.com/grafana/k8s-monitoring-helm/tree/main/charts/k8s-monitoring/docs/examples/auth/external-secrets
+      destinationsMap:
+        # using a map here instead of an array makes it smoother to override individual subvalues
+        clusterdoslogs:
+          type: loki
+          urlFrom: convert.nonsensitive(remote.kubernetes.secret.logs_service.data["loki-host"]) + "/loki/api/v1/push"
+          auth:
+            type: basic
+            usernameKey: loki-username
+            passwordKey: access-token
+          secret:
+            create: false
+            name: grafana-cloud
+        clusterdosmetrics:
+          # https://github.com/grafana/k8s-monitoring-helm/blob/main/charts/k8s-monitoring/destinations/prometheus-values.yaml
+          type: prometheus
+          # urlFrom: convert.nonsensitive(remote.kubernetes.secret.clusterdosmetrics.data["prom-host"]) + "/api/v1/write"
+          # note that grafana cloud uses a non-standard endpoint "/api/prom/push"
+          urlFrom: convert.nonsensitive(remote.kubernetes.secret.clusterdosmetrics.data["prom-host"]) + "/api/prom/push"
+
+          # -- Rule blocks to apply to all metrics. Uses the [write_relabel_config block](https://grafana.com/docs/alloy/latest/reference/components/prometheus.remote_write/#write_relabel_config-block)
+          # of the prometheus.remote_write component. Format:
+          # metricProcessingRules: |
+          #   write_relabel_config {
+          #     source_labels = ["__name__"]
+          #     regex       = "^kube_"
+          #     action = "drop"
+          #   }
+
+          auth:
+            type: basic
+            usernameKey: prom-username
+            passwordKey: access-token
+          secret:
+            create: false
+            name: grafana-cloud
+          queueConfig:
+            # tune this down so we don't get 429 ratelimited in free tier
+            # note that default maxshards is 50, so this could fall behind in massive clusters
+            # suggest more filtering.
+            maxSamplesPerSend: 500
+
+      clusterMetrics:
+        # https://github.com/grafana/k8s-monitoring-helm/tree/main/charts/k8s-monitoring/charts/feature-cluster-metrics
+        enabled: false
+
+      nodeLogs:
+        # https://github.com/grafana/k8s-monitoring-helm/tree/main/charts/k8s-monitoring/charts/feature-node-logs
+        enabled: false
+      podLogs:
+        enabled: false
+      podLogsViaKubernetesApi:
+        # https://github.com/grafana/k8s-monitoring-helm/tree/main/charts/k8s-monitoring/charts/feature-pod-logs-via-kubernetes-api
+        enabled: false
+      # alloy-logs:
+      #   enabled: true
+      #   # extraConfig: |
+      #   #   TODO
+
+      alloy-metrics:
+        # Annotation Autodiscovery feature requires the use of the alloy-metrics collector by default
+        # https://github.com/grafana/k8s-monitoring-helm/blob/main/charts/k8s-monitoring/docs/collectors/alloy.md
+        enabled: true
+        # extraConfig: |
+        #   TODO
+
+        remoteConfig:
+          enabled: false
+          urlFrom: convert.nonsensitive(remote.kubernetes.secret.clusterdosmetrics.data["fleet-management-host"])
+          auth:
+            type: basic
+            usernameKey: fleet-management-user
+            passwordKey: access-token
+          secret:
+            create: false
+            name: grafana-cloud
+            # namespace: clusterdos-observability
+        alloy:
+          # https://github.com/grafana/k8s-monitoring-helm/blob/main/charts/k8s-monitoring/collectors/named-defaults/alloy-metrics.yaml
+          # https://github.com/grafana/k8s-monitoring-helm/blob/main/charts/k8s-monitoring/collectors/upstream/alloy-values.yaml
+          controller:
+            autoscaling:
+              horizontal:
+                enabled: true
+          extraEnv:
+          - name: GCLOUD_RW_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: grafana-cloud
+                key: access-token
+          - name: CLUSTER_NAME
+            value: *clustername
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          - name: GCLOUD_FM_COLLECTOR_ID
+            value: k8smon-$(CLUSTER_NAME)-$(NAMESPACE)-alloy-metrics-$(NODE_NAME)
+      annotationAutodiscovery:
+        # annotate with k8s.grafana.com/scrape: "true"
+        # https://grafana.com/docs/grafana-cloud/monitor-infrastructure/kubernetes-monitoring/configuration/helm-chart-config/helm-chart/customize-helm-chart/#annotation-autodiscovery
+        # https://github.com/grafana/k8s-monitoring-helm/tree/main/charts/k8s-monitoring/charts/feature-annotation-autodiscovery
+        enabled: true
+      selfReporting:
+        enabled: false
+      alloy-operator:
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+          limits:
+            cpu: 500m
+            memory: 128Mi
+
+  metricsserver:
+    enabled: false
+    namespace: kube-system
+    repoURL: 'https://kubernetes-sigs.github.io/metrics-server/'
+    chart: metrics-server
+    targetRevision: 'v3.13.0'
+    automated: true
+    syncWave: 1
+    values:
+      # https://artifacthub.io/packages/helm/metrics-server/metrics-server
+      # helm repo add crossplane-stable https://charts.crossplane.io/stable
+      # helm search repo crossplane-stable --versions
+      # helm show values crossplane-stable/crossplane
+      replicas: 1
+      # this value means prometheus metrics, don't get confused lol
+      metrics.enabled: false
+
+  metallb:
+    enabled: false
+    namespace: metallb-system
+    repoURL: 'https://charts.bitnami.com/bitnami'
+    chart: metallb
+    targetRevision: '6.4.22'
+    automated: true
+    syncWave: 2
+    values: {}
+      # helm repo add bitnami https://charts.bitnami.com/bitnami
+      # helm search repo bitnami --versions | grep metallb
+      # helm show values binami/metallb
+
+  nfd:
+    enabled: false
+    namespace: node-feature-discovery
+    repoURL: 'https://kubernetes-sigs.github.io/node-feature-discovery/charts'
+    chart: node-feature-discovery
+    targetRevision: 'v0.18.3'
+    automated: true
+    syncWave: 1
+    values:
+      # helm repo add nfd https://kubernetes-sigs.github.io/node-feature-discovery/charts
+      # helm search repo nfd --versions
+      # helm show values nfd/node-feature-discovery
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+
+  nvidiagpuoperator:
+    enabled: false
+    namespace: gpu-operator
+    repoURL: 'https://helm.ngc.nvidia.com/nvidia'
+    chart: gpu-operator
+    # TODO v25.10.1
+    targetRevision: 'v25.10.0'
+    automated: true
+    ignoreDifferences:
+    # allow user to modify the clusterpolicy
+    # and ignore controller-initiated changes
+    - group: nvidia.com
+      kind: ClusterPolicy
+      name: cluster-policy
+      jsonPointers:
+      - /spec/validator
+      - /cdi/default
+      - /daemonsets/config
+    syncWave: 2
+    values:
+      # helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
+      # helm search repo nvidia
+      # helm show values nvidia/gpu-operator
+      operator:
+        annotations:
+          k8s.grafana.com/scrape: "true"
+
+      dcgmExporter:
+        enabled: true
+        serviceMonitor:
+          enabled: true
+        # config:
+        #   name: custom-dcgm-exporter-metrics
+        #   create: false
+
+
+  rook:
+    enabled: false
+    namespace: rook-ceph
+    repoURL: 'https://charts.rook.io/release'
+    chart: rook-ceph
+    targetRevision: 'v1.18.7'
+    automated: true
+    syncWave: 1
+    # values:
+    # helm repo add rook https://charts.rook.io/release
+    # helm search repo rook --versions
+    # helm show values rook/rook-ceph
+
+  tailscale:
+    # https://tailscale.com/kb/1236/kubernetes-operator
+    enabled: false
+    namespace: tailscale
+    repoURL: 'https://pkgs.tailscale.com/helmcharts'
+    chart: tailscale-operator
+    targetRevision: '1.94.1'
+    automated: true
+    syncWave: 1
+    values:
+      # helm repo add tailscale https://pkgs.tailscale.com/helmcharts
+      # helm search repo tailscale
+      # helm show values tailscale/tailscale-operator
+
+      # Operator oauth credentials. If set a Kubernetes Secret with the provided
+      # values will be created in the operator namespace. If unset a Secret named
+      # operator-oauth must be precreated.
+      # WARN: It is recommended to use a k8s secret (see /secrets)
+      # instead of a naked value in the dOS yaml!
+      oauth: {}
+        # clientId: ""
+        # clientSecret: ""
+      operatorConfig:
+        # gitapps.yaml will inject hostname from clusterdos.clustername (helm workaround)
+        hostname: *clustername
+        # gitapps.yaml template will inject tag:<clustername>-operator if defaultTags is unset
+        # defaultTags:
+        #   - "tag:*clustername-operator"
+        logging: "info" # info, debug, dev
+        nodeSelector:
+          kubernetes.io/os: linux
+        # proxyConfig:
+        # Multiple tags can be passed as a comma-separated string i.e 'tag:k8s-proxies,tag:prod'.
+        # Note that if you pass multiple tags to this field via `--set` flag to helm upgrade/install commands you must escape the comma (for example, "tag:k8s-proxies\,tag:prod"). See https://github.com/helm/helm/issues/1556
+        # gitapps.yaml template will inject tag:<clustername>-subtag if defaultTags is unset
+        # defaultTags: "tag:*clustername-subtag"
+      apiServerProxyConfig:
+        mode: "true" # "true", "false", "noauth"
+
+  stackgres:
+    # note - stackgres is a headache to install with argo,
+    # they have all kinds of nonstandard webhook stuff.
+    # hopefully this improves in the future.
+    # for now, you can manually sync the crds in argo and it should help
+    # fix the initial install
+    enabled: false
+    namespace: stackgres
+    repoURL: 'https://stackgres.io/downloads/stackgres-k8s/stackgres/helm/'
+    chart: stackgres-operator
+    targetRevision: '1.17.4'
+    automated: true
+    syncWave: 1
+    ignoreDifferences:
+    # credit: https://gitlab.com/ongresinc/stackgres/-/issues/2762#note_1915552754
+    - group: admissionregistration.k8s.io
+      kind: ValidatingWebhookConfiguration
+      jsonPointers:
+      - /webhooks
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      jsonPointers:
+      - /webhooks
+    - group: stackgres.io
+      kind: SGConfig
+      jsonPointers:
+      - /spec/global
+      - /spec/rbac
+    - group: apiextensions.k8s.io
+      kind: CustomResourceDefinition
+      jqPathExpressions:
+      - '.spec.versions[].schema.openAPIV3Schema.properties.status.properties.benchmark.properties.pgbench.properties | .. | select(.nullable? == false)'
+    values: {}
+    # Notes:
+    # - timescaledb extension is enabled by default. kudos.
+
+  traefik:
+    enabled: false
+    namespace: traefik
+    repoURL: 'https://traefik.github.io/charts'
+    chart: traefik
+    targetRevision: '37.3.0'
+    automated: true
+    # sync after certmanager
+    syncWave: 2
+    values:
+      # helm repo add traefik https://traefik.github.io/charts
+      # helm search repo traefik
+      # helm show values traefik/traefik
+      globalArguments:
+      - "--global.checknewversion"
+      - "--global.sendanonymoususage=false"
+      autoscaling:
+        # creates an HPA for traefik
+        enabled: true
+        maxReplicas: 2
+        metrics:
+        - type: Resource
+          resource:
+            name: cpu
+            target:
+              type: Utilization
+              averageUtilization: 80
+        - type: Resource
+          resource:
+            name: memory
+            target:
+              type: Utilization
+              averageUtilization: 80
+      service:
+        enabled: true
+        ## Single service is using `MixedProtocolLBService` feature gate.
+        ## When set to false, it will create two Service, one for TCP and one for UDP.
+        single: true
+        type: LoadBalancer
+      ports:
+        web:
+          asDefault: false
+          # set nodeport if running single-node k8s with no managed loadbalancers
+          # nodePort: 80
+        websecure:
+          # set nodeport if running single-node k8s with no managed loadbalancers
+          # note that it may require updating nodeport settings in kube apiserver args,
+          # and firewall rules to allow access.
+          # nodePort: 443
+          # recognize certificate verification requests and send them to the right place
+          allowACMEByPass: true
+          # --  See https://doc.traefik.io/traefik/routing/entrypoints/#tls
+          # tls:
+          #   enabled: true
+          #   options: ""
+          #   certResolver: ""
+          #   domains: []
+          # -- One can apply Middlewares on an entrypoint
+          # https://doc.traefik.io/traefik/middlewares/overview/
+          # https://doc.traefik.io/traefik/routing/entrypoints/#middlewares
+          # -- /!\ It introduces here a link between your static configuration and your dynamic configuration /!\
+          # It follows the provider naming convention: https://doc.traefik.io/traefik/providers/overview/#provider-namespace
+          #   - namespace-name1@kubernetescrd
+          #   - namespace-name2@kubernetescrd
+          # middlewares: []
+      ingressClass:
+        isDefaultClass: true
+      experimental:
+        kubernetesGateway:
+          enabled: false
+      providers:
+        kubernetesGateway:
+          enabled: true
+      ingressRoute:
+        dashboard:
+          enabled: false
+      gateway:
+        listeners:
+          web:
+            # -- Port is the network port. Multiple listeners may use the same port, subject to the Listener compatibility rules.
+            # The port must match a port declared in ports section.
+            port: 8000
+            # -- Optional hostname. See [Hostname](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.Hostname)
+            hostname: ""
+            # Specify expected protocol on this listener. See [ProtocolType](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.ProtocolType)
+            protocol: HTTP
+          # websecure listener is disabled by default because certificateRefs needs to be added,
+          # or you may specify TLS protocol with Passthrough mode and add "--providers.kubernetesGateway.experimentalChannel=true" in additionalArguments section.
+          # websecure:
+          #   # -- Port is the network port. Multiple listeners may use the same port, subject to the Listener compatibility rules.
+          #   # The port must match a port declared in ports section.
+          #   port: 8443
+          #   # -- Optional hostname. See [Hostname](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.Hostname)
+          #   hostname:
+          #   # Specify expected protocol on this listener See [ProtocolType](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.ProtocolType)
+          #   protocol: HTTPS
+          #   # -- Routes are restricted to namespace of the gateway [by default](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.FromNamespaces)
+          #   namespacePolicy:
+          #   # -- Add certificates for TLS or HTTPS protocols. See [GatewayTLSConfig](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io%2fv1.GatewayTLSConfig)
+          #   certificateRefs:
+          #   # -- TLS behavior for the TLS session initiated by the client. See [TLSModeType](https://gateway-api.sigs.k8s.io/reference/spec/#gateway.networking.k8s.io/v1.TLSModeType).
+          #   mode:
+
+          # https://github.com/traefik/traefik-helm-chart/blob/master/EXAMPLES.md#install-with-auto-scaling
+      deployment:
+        # must be set to 'null' if autoscaling is enabled
+        replicas: null
+      metrics:
+        prometheus:
+          enabled: false
+          serviceMonitor:
+            enabled: false
+      resources:
+        # must be set if using autoscaling
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 128Mi
+      otlp:
+        enabled: false
+        grpc:
+          enabled: false
+
+  kubeseal:
+    enabled: false
+    namespace: kubeseal
+    repoURL: 'https://bitnami-labs.github.io/sealed-secrets'
+    chart: sealed-secrets
+    targetRevision: '2.17.9'
+    automated: true
+    syncWave: 1
+    values:
+      # helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets
+      # helm search repo sealed-secrets --versions
+      # helm show values sealed-secrets/sealed-secrets
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 50m
+          memory: 64Mi
+      metrics:
+        enabled: false
+        serviceMonitor:
+          enabled: false
+
+  vectoragent:
+    enabled: false
+    namespace: vector
+    repoURL: 'https://helm.vector.dev'
+    chart: vector
+    targetRevision: '0.48.0'
+    automated: true
+    syncWave: 1
+    values:
+      # helm repo add vector https://helm.vector.dev
+      # helm search repo vector
+      # helm show values vector/vector
+
+      # [Role](https://vector.dev/docs/setup/deployment/roles/) for this Vector instance, valid options are:
+      # "Agent", "Aggregator", and "Stateless-Aggregator".
+      role: Agent
+      env: []
+      secrets:
+        # secrets.generic -- Each Key/Value will be added to the Secret's data key, each value should be raw and NOT base64
+        # encoded. Any secrets can be provided here. It's commonly used for credentials and other access related values.
+        # **NOTE: Don't commit unencrypted secrets to git!**
+        generic: {}
+          # my_variable: "my-secret-value"
+          # datadog_api_key: "api-key"
+          # awsAccessKeyId: "access-key"
+          # awsSecretAccessKey: "secret-access-key"
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+      ingress:
+        enabled: false
+        tls: []
+        # tls:
+        #  - secretName: chart-example-tls
+        #    hosts:
+        #      - chart-example.local
+        # existingConfigMaps -- List of existing ConfigMaps for Vector's configuration instead of creating a new one. Requires
+        # dataDir to be set. Additionally, containerPorts, service.ports, and serviceHeadless.ports should be specified based on
+        # your supplied configuration. If set, this parameter takes precedence over customConfig and the chart's default configs.
+      existingConfigMaps: []
+      # dataDir -- Specify the path for Vector's data, only used when existingConfigMaps are used.
+      # dataDir: ""
+      # customConfig: {}
+      persistence:
+        enabled: false
+
+  vectoraggregator:
+    enabled: false
+    namespace: vector
+    repoURL: 'https://helm.vector.dev'
+    chart: vector
+    targetRevision: '0.48.0'
+    automated: true
+    syncWave: 1
+    values:
+      # [Role](https://vector.dev/docs/setup/deployment/roles/) for this Vector instance, valid options are:
+      # "Agent", "Aggregator", and "Stateless-Aggregator".
+      role: Aggregator
+      # 'replicas' is Valid for the "Aggregator" and "Stateless-Aggregator" roles only
+      replicas: 2
+      autoscaling:
+        enabled: true
+        minreplicas: 1
+        maxreplicas: 5
+        targetCPUUtilizationPercentage: 80
+        targetMemoryUtilizationPercentage: 80
+      env: []
+      secrets:
+        # secrets.generic -- Each Key/Value will be added to the Secret's data key, each value should be raw and NOT base64
+        # encoded. Any secrets can be provided here. It's commonly used for credentials and other access related values.
+        # **NOTE: Don't commit unencrypted secrets to git!**
+        generic: {}
+          # my_variable: "my-secret-value"
+          # datadog_api_key: "api-key"
+          # awsAccessKeyId: "access-key"
+          # awsSecretAccessKey: "secret-access-key"
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+      ingress:
+        enabled: false
+        tls: []
+        # tls:
+        #  - secretName: chart-example-tls
+        #    hosts:
+        #      - chart-example.local
+        # existingConfigMaps -- List of existing ConfigMaps for Vector's configuration instead of creating a new one. Requires
+        # dataDir to be set. Additionally, containerPorts, service.ports, and serviceHeadless.ports should be specified based on
+        # your supplied configuration. If set, this parameter takes precedence over customConfig and the chart's default configs.
+      existingConfigMaps: []
+      # dataDir -- Specify the path for Vector's data, only used when existingConfigMaps are used.
+      # dataDir: ""
+      # customConfig: {}
+      persistence:
+        enabled: false
+
+  vllm:
+    enabled: false
+    namespace: vllm
+    internal: true
+    path: gitapps/vllm
+    automated: true
+    syncWave: 1
+    values:
+      # model: "facebook/opt-125m"  # Change to your desired model
+      model: "MiniMaxAI/MiniMax-M2"
+      # secret:
+      #   name: huggingface-token
+      priority: -100
+      replicas: 1
+      resources:
+        requests:
+          nvidia.com/gpu: 1
+          memory: "16Gi"
+          cpu: "1"
+        limits:
+          nvidia.com/gpu: 1
+          memory: "32Gi"
+          cpu: "1"
+      service:
+        type: ClusterIP
+        port: 8000
+
+  wekafs:
+    enabled: false
+    namespace: csi-wekafs
+    repoURL: 'https://weka.github.io/csi-wekafs'
+    chart: csi-wekafsplugin
+    targetRevision: '2.8.1'
+    automated: true
+    syncWave: 1
+    values:
+      # helm repo add csi-wekafs https://weka.github.io/csi-wekafs
+      # helm search repo csi-wekafs
+      # helm show values csi-wekafs/csi-wekafsplugin
+
+      hostNetwork: false
+      dynamicProvisionPath: "csi-volumes"
+
+      globalPluginTolerations:
+        # if you're still using 'master' then you deserve
+        # the inconvenience of configging it yourself
+        # - key: node-role.kubernetes.io/master
+        #   operator: Exists
+        #   effect: NoSchedule
+        &globalPluginTolerations
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      nodePluginTolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      # pluginConfig:
+      #   allowInsecureHttps: true
+      #   mountProtocol:
+      #     useNfs: true
+      #     allowNfsFailback: true
+      #     interfaceGroupName: changeme
+      #     # -- Specify existing client group name for NFS configuration. If not set, "WekaCSIPluginClients" group will be created
+      #     clientGroupName: changeme

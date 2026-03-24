@@ -1,0 +1,6 @@
+
+* [ ] vllm gitapp
+* [ ] add gateway api crds
+* [ ] nvidia driver crd gitapp
+https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-driver-configuration.html
+* [ ] add nodeselector to nvidia nfd so it doesn't run on cpu nodes

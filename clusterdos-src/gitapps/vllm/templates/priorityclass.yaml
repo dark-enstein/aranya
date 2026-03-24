@@ -1,0 +1,8 @@
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: clusterdos-vllm
+value: {{ default -100 .Values.priority }}
+globalDefault: false
+description: "Clusterdos vllm priority"

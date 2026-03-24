@@ -1,0 +1,22 @@
+.DS_Store
+.idea
+*.log
+tmp/
+
+# ignore everything in the secrets dir
+secrets/**
+
+# except the subdir refs
+!secrets/dev
+!secrets/dev
+!secrets/examples
+!secrets/*.example.yaml
+
+# except keep ostensibly encrypted files
+!secrets/**/*.gpg
+!secrets/**/*.asc
+
+# and keep the examples subdir
+!secrets/examples/**
+
+asdf*

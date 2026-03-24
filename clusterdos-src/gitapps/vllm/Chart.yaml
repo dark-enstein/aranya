@@ -1,0 +1,7 @@
+---
+apiVersion: v3
+name: vllm
+description: clusterdOS-managed vllm
+type: application
+version: 0.0.0
+appVersion: 'v0.0.0'

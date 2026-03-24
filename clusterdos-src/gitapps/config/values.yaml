@@ -1,0 +1,4 @@
+---
+# cluster name, must be set per-cluster
+# we suggest using https://github.com/dustinkirkland/golang-petname
+clustername: null
