@@ -1,0 +1,215 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-html
+  namespace: ayobami-app
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>Hello Aranya</title>
+      <style>
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=DM+Mono&display=swap');
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+          min-height: 100vh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #0a0a0f;
+          font-family: 'DM Mono', monospace;
+          overflow: hidden;
+        }
+
+        .bg {
+          position: fixed; inset: 0;
+          background: radial-gradient(ellipse at 30% 60%, #1a0533 0%, transparent 60%),
+                      radial-gradient(ellipse at 80% 20%, #0d1f3c 0%, transparent 50%);
+        }
+
+        .card {
+          position: relative;
+          text-align: center;
+          padding: 4rem 5rem;
+          border: 1px solid rgba(255,255,255,0.08);
+          background: rgba(255,255,255,0.03);
+          backdrop-filter: blur(20px);
+          animation: fadeUp 1s ease both;
+        }
+
+        .card::before {
+          content: '';
+          position: absolute;
+          inset: -1px;
+          background: linear-gradient(135deg, rgba(130,80,255,0.4), transparent 50%, rgba(30,120,255,0.3));
+          mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+          mask-composite: exclude;
+          padding: 1px;
+          pointer-events: none;
+        }
+
+        .label {
+          font-size: 0.65rem;
+          letter-spacing: 0.3em;
+          color: rgba(255,255,255,0.3);
+          text-transform: uppercase;
+          margin-bottom: 1.5rem;
+        }
+
+        h1 {
+          font-family: 'Playfair Display', serif;
+          font-size: clamp(3rem, 8vw, 6rem);
+          font-weight: 700;
+          background: linear-gradient(135deg, #fff 30%, rgba(150,100,255,0.8));
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          background-clip: text;
+          line-height: 1.1;
+          letter-spacing: -0.02em;
+        }
+
+        .sub {
+          margin-top: 1.5rem;
+          font-size: 0.75rem;
+          letter-spacing: 0.15em;
+          color: rgba(255,255,255,0.2);
+        }
+
+        @keyframes fadeUp {
+          from { opacity: 0; transform: translateY(24px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="bg"></div>
+      <div class="card">
+        <p class="label">Welcome</p>
+        <h1>Hello<br/>Aranya</h1>
+        <p class="sub">ayobami bamigboye</p>
+      </div>
+    </body>
+    </html>
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-aranya
+  namespace: ayobami-app
+  labels:
+    app: hello-aranya
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hello-aranya
+  template:
+    metadata:
+      labels:
+        app: hello-aranya
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27-alpine
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 30
+      volumes:
+      - name: html
+        configMap:
+          name: nginx-html
+---
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hello-aranya
+  namespace: ayobami-app
+  annotations:
+    # --- Nginx ingress controller ---
+    kubernetes.io/ingress.class: "nginx"
+
+    # Redirect all HTTP → HTTPS
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+
+    # --- cert-manager (Let's Encrypt) ---
+    # Remove these two lines if you manage TLS certs manually.
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - hello.aranya.example.com # ← replace with your real domain
+    secretName: hello-aranya-tls # cert-manager will populate this secret
+  rules:
+  - host: hello.aranya.example.com # ← replace with your real domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hello-aranya
+            port:
+              number: 80
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-aranya-np
+  namespace: ayobami-app
+  labels:
+    app: hello-aranya
+spec:
+  selector:
+    app: hello-aranya
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  type: NodePort
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-aranya
+  namespace: ayobami-app
+  labels:
+    app: hello-aranya
+spec:
+  selector:
+    app: hello-aranya
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+  type: ClusterIP
